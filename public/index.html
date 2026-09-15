@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CareerPilot AI — AI Career Assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="nav">
+  <a class="brand" href="#"><span class="brand-mark">✦</span> CareerPilot <b>AI</b></a>
+  <nav><a href="#features">Features</a><a href="#analyzer">Analyzer</a><a href="#pricing">Pricing</a></nav>
+  <a class="nav-btn" href="#analyzer">Analyze CV</a>
+</header>
+
+<main>
+<section class="hero">
+  <div>
+    <div class="pill">✦ REAL AI CV ANALYZER</div>
+    <h1>Make your CV <span>job-ready.</span></h1>
+    <p>Upload your resume, compare it with a job description, and get an AI-powered ATS review with clear actions to improve your application.</p>
+    <div class="actions"><a class="primary" href="#analyzer">Analyze my CV →</a><a class="secondary" href="#features">See features</a></div>
+    <div class="trust">✓ PDF/DOCX support &nbsp; • &nbsp; ✓ Files are never stored on the server</div>
+  </div>
+  <div class="preview">
+    <div class="score"><strong>86</strong><small>ATS SCORE</small></div>
+    <h3>Strong match</h3><p>Your CV is close to job-ready.</p>
+    <div class="bar"><span style="width:92%"></span></div><div class="row"><span>Keywords</span><b>92%</b></div>
+    <div class="bar"><span style="width:84%"></span></div><div class="row"><span>Experience</span><b>84%</b></div>
+    <div class="tip">✦ Add measurable results to your experience bullets.</div>
+  </div>
+</section>
+
+<section id="analyzer" class="section analyzer">
+  <div class="heading"><div class="eyebrow">LIVE AI ANALYSIS</div><h2>Check your CV</h2><p>Upload a PDF or DOCX and optionally paste the target job description.</p></div>
+  <div class="analyzer-grid">
+    <div class="card upload-card" id="dropzone">
+      <div class="upload-icon">↑</div><h3 id="uploadTitle">Upload your CV</h3><p>PDF or DOCX · maximum 10 MB</p>
+      <label class="upload-btn">Choose file<input id="cv" type="file" accept=".pdf,.docx" hidden></label>
+      <div id="fileName"></div>
+    </div>
+    <div class="card">
+      <label class="label">Job description <span>Optional</span></label>
+      <textarea id="job" placeholder="Paste the job description here for a job-specific match score..."></textarea>
+      <button id="analyze" class="primary full">Analyze with AI →</button>
+      <button id="coverLetterBtn" class="secondary full">Generate Cover Letter →</button>
+      <button id="interviewBtn" class="secondary full">Interview Questions →</button>
+      <div id="status"></div>
+    </div>
+  </div>
+</section>
+
+<section id="results" class="section results hidden">
+  <div class="heading"><div class="eyebrow">YOUR RESULT</div><h2>AI career report</h2><p id="summary"></p></div>
+  <div class="result-top">
+    <div class="big-score"><strong id="ats">—</strong><span>ATS SCORE</span></div>
+    <div class="metric"><b id="match">—</b><span>JOB MATCH</span></div>
+    <div class="metric"><b id="exp">—</b><span>EXPERIENCE</span></div>
+    <div class="metric"><b id="skills">—</b><span>SKILLS</span></div>
+  </div>
+  <div class="report-grid">
+    <div class="report-card"><h3>💪 Strengths</h3><ul id="strengths"></ul></div>
+    <div class="report-card"><h3>⚠️ Weaknesses</h3><ul id="weaknesses"></ul></div>
+    <div class="report-card"><h3>🔑 Missing keywords</h3><ul id="keywords"></ul></div>
+    <div class="report-card"><h3>🛠️ Improvements</h3><ul id="improvements"></ul></div>
+  </div>
+</section>
+
+<section id="coverLetterResult" class="section results hidden">
+  <div class="heading"><div class="eyebrow">YOUR COVER LETTER</div><h2>Ready to send</h2><p>Review it, tweak the placeholders if any, then copy it into your application.</p></div>
+  <div class="card">
+    <button id="copyCoverLetter" class="secondary" style="float:right">Copy text</button>
+    <pre id="coverLetterText" class="cover-letter-box"></pre>
+  </div>
+</section>
+
+<section id="interviewResult" class="section results hidden">
+  <div class="heading"><div class="eyebrow">INTERVIEW PREP</div><h2>Practice questions</h2><p>Questions tailored to your CV, each with a quick tip on how to answer.</p></div>
+  <div id="interviewList"></div>
+</section>
+
+<section id="features" class="section">
+<div class="heading centered"><div class="eyebrow">CAREER TOOLKIT</div><h2>Everything in one place.</h2></div>
+<div class="features">
+<article><i>◎</i><h3>ATS Analysis</h3><p>Identify common resume problems before you apply.</p></article>
+<article><i>⌁</i><h3>Job Match</h3><p>Compare your CV with a target job description.</p></article>
+<article><i>✎</i><h3>Cover Letters</h3><p>Generate a tailored, ready-to-send cover letter instantly.</p></article>
+<article><i>◈</i><h3>Interview Coach</h3><p>Get role-specific interview questions with answer tips instantly.</p></article>
+</div>
+</section>
+
+<section id="pricing" class="section pricing"><div class="heading centered"><div class="eyebrow">MONETIZATION PLAN</div><h2>Free first. Pro later.</h2></div>
+<div class="prices"><div class="price"><h3>Free</h3><strong>$0</strong><p>Limited AI analyses.</p><ul><li>✓ Basic ATS report</li><li>✓ Basic job match</li></ul></div>
+<div class="price featured"><b class="popular">PRO</b><h3>Pro</h3><strong>$4.99</strong><p>For serious job seekers.</p><ul><li>✓ Unlimited analysis</li><li>✓ Advanced insights</li><li>✓ Cover letters</li><li>✓ Interview coach</li></ul></div></div></section>
+</main>
+<footer><div class="brand"><span class="brand-mark">✦</span> CareerPilot <b>AI</b></div><span>AI career tools for the next opportunity.</span></footer>
+<script src="/app.js"></script>
+</body></html>
