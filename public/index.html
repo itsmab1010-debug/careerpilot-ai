@@ -36,6 +36,7 @@
 
 <section id="analyzer" class="section analyzer">
   <div class="heading"><div class="eyebrow">LIVE AI ANALYSIS</div><h2>Check your CV</h2><p>Upload a PDF or DOCX and optionally paste the target job description.</p></div>
+  <div id="proBadge" class="pro-badge hidden"></div>
   <div class="analyzer-grid">
     <div class="card upload-card" id="dropzone">
       <div class="upload-icon">↑</div><h3 id="uploadTitle">Upload your CV</h3><p>PDF or DOCX · maximum 10 MB</p>
@@ -92,9 +93,18 @@
 </div>
 </section>
 
-<section id="pricing" class="section pricing"><div class="heading centered"><div class="eyebrow">MONETIZATION PLAN</div><h2>Free first. Pro later.</h2></div>
-<div class="prices"><div class="price"><h3>Free</h3><strong>$0</strong><p>Limited AI analyses.</p><ul><li>✓ Basic ATS report</li><li>✓ Basic job match</li></ul></div>
-<div class="price featured"><b class="popular">PRO</b><h3>Pro</h3><strong>$4.99</strong><p>For serious job seekers.</p><ul><li>✓ Unlimited analysis</li><li>✓ Advanced insights</li><li>✓ Cover letters</li><li>✓ Interview coach</li></ul></div></div></section>
+<section id="pricing" class="section pricing"><div class="heading centered"><div class="eyebrow">FREE OR PRO</div><h2>Start free. Upgrade anytime.</h2></div>
+<div class="prices"><div class="price"><h3>Free</h3><strong>$0</strong><p>Limited AI uses per day.</p><ul><li>✓ ATS analysis</li><li>✓ Job match</li><li>✓ Cover letters</li><li>✓ Interview coach</li></ul></div>
+<div class="price featured"><b class="popular">PRO</b><h3>Pro</h3><strong>$4.99</strong><p>For serious job seekers.</p><ul><li>✓ Unlimited everything</li><li>✓ No daily limit</li><li>✓ Priority updates</li></ul><a id="getProBtn" class="primary full" href="#" target="_blank" rel="noopener">Get Pro →</a></div></div>
+<div class="restore-access">
+  <button id="restoreToggle" class="link-btn">Already Pro? Restore access on this device</button>
+  <div id="restoreForm" class="restore-form hidden">
+    <input type="email" id="restoreEmail" placeholder="Email you paid with">
+    <button id="restoreBtn" class="secondary">Unlock Pro</button>
+    <div id="restoreStatus"></div>
+  </div>
+</div>
+</section>
 </main>
 <footer><div class="brand"><span class="brand-mark">✦</span> CareerPilot <b>AI</b></div><span>AI career tools for the next opportunity.</span></footer>
 <script src="/app.js"></script>

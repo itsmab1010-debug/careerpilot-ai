@@ -7,6 +7,66 @@ const coverLetterBtn = document.getElementById("coverLetterBtn");
 const interviewBtn = document.getElementById("interviewBtn");
 const allButtons = [analyzeBtn, coverLetterBtn, interviewBtn];
 
+const proBadge = document.getElementById("proBadge");
+const getProBtn = document.getElementById("getProBtn");
+const restoreToggle = document.getElementById("restoreToggle");
+const restoreForm = document.getElementById("restoreForm");
+const restoreEmail = document.getElementById("restoreEmail");
+const restoreBtn = document.getElementById("restoreBtn");
+const restoreStatus = document.getElementById("restoreStatus");
+
+let isPro = false;
+
+async function initProState() {
+  try {
+    const [meRes, configRes] = await Promise.all([fetch("/api/me"), fetch("/api/config")]);
+    const me = await meRes.json();
+    const config = await configRes.json();
+
+    if (config.buyLink && getProBtn) getProBtn.href = config.buyLink;
+
+    isPro = !!me.isPro;
+    if (isPro && proBadge) {
+      proBadge.textContent = `✦ Pro member — unlimited access (${me.email})`;
+      proBadge.classList.remove("hidden");
+    }
+  } catch {
+    // Badge/buy-link just won't show — core features still work either way.
+  }
+}
+initProState();
+
+if (restoreToggle) {
+  restoreToggle.addEventListener("click", () => restoreForm.classList.toggle("hidden"));
+}
+
+if (restoreBtn) {
+  restoreBtn.addEventListener("click", async () => {
+    const email = restoreEmail.value.trim();
+    if (!email) {
+      restoreStatus.textContent = "Please enter your email.";
+      return;
+    }
+    restoreBtn.disabled = true;
+    restoreStatus.textContent = "Checking…";
+    try {
+      const r = await fetch("/api/unlock-pro", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || "Could not verify.");
+      restoreStatus.textContent = "✓ Pro unlocked! Reloading…";
+      setTimeout(() => location.reload(), 1200);
+    } catch (e) {
+      restoreStatus.textContent = e.message;
+    } finally {
+      restoreBtn.disabled = false;
+    }
+  });
+}
+
 cv.addEventListener("change", () => {
   nameBox.textContent = cv.files[0] ? `Selected: ${cv.files[0].name}` : "";
 });
@@ -33,10 +93,11 @@ async function callAI(endpoint, activeBtn, busyLabel, idleLabel) {
     const data = await r.json();
     if (!r.ok) throw new Error(data.error || "Request failed");
 
-    status.textContent =
-      typeof data.remaining === "number"
-        ? `${data.remaining} free use${data.remaining === 1 ? "" : "s"} left today`
-        : "";
+    status.textContent = data.isPro
+      ? "✦ Pro — unlimited"
+      : typeof data.remaining === "number"
+      ? `${data.remaining} free use${data.remaining === 1 ? "" : "s"} left today`
+      : "";
     return data;
   } catch (e) {
     status.textContent =

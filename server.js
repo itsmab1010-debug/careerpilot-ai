@@ -2,6 +2,10 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import dotenv from "dotenv";
+import crypto from "crypto";
+import cookieParser from "cookie-parser";
+import jwt from "jsonwebtoken";
+import { createClient } from "@supabase/supabase-js";
 import { GoogleGenAI } from "@google/genai";
 import { PDFParse } from "pdf-parse";
 import mammoth from "mammoth";
@@ -11,13 +15,89 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3000;
 
+// Needed so req.secure / req.protocol correctly reflect https when running
+// behind Render's proxy (Render terminates SSL and forwards plain HTTP).
+app.set("trust proxy", 1);
+
 // Files are kept in memory only (never saved to disk) and are limited to 10 MB.
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }
 });
 
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+
+// --- Lemon Squeezy webhook -------------------------------------------------
+// This route needs the RAW request body to verify the signature, so it must
+// be registered (with its own express.raw parser) BEFORE the global
+// express.json() below — otherwise the body would already be parsed/consumed
+// and signature verification would fail.
+app.post(
+  "/api/webhooks/lemonsqueezy",
+  express.raw({ type: "application/json" }),
+  async (req, res) => {
+    try {
+      const secret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
+      if (!secret) {
+        console.error("LEMONSQUEEZY_WEBHOOK_SECRET is not set.");
+        return res.status(500).send("Webhook secret not configured.");
+      }
+
+      const signatureHeader = req.headers["x-signature"] || "";
+      const digest = Buffer.from(
+        crypto.createHmac("sha256", secret).update(req.body).digest("hex"),
+        "utf8"
+      );
+      const signature = Buffer.from(signatureHeader, "utf8");
+
+      if (digest.length !== signature.length || !crypto.timingSafeEqual(digest, signature)) {
+        return res.status(401).send("Invalid signature.");
+      }
+
+      const payload = JSON.parse(req.body.toString("utf8"));
+      const eventName = payload?.meta?.event_name;
+      const attrs = payload?.data?.attributes;
+      const subscriptionId = payload?.data?.id;
+
+      const relevantEvents = [
+        "subscription_created",
+        "subscription_updated",
+        "subscription_cancelled",
+        "subscription_resumed",
+        "subscription_expired",
+        "subscription_paused",
+        "subscription_unpaused",
+        "subscription_payment_success",
+        "subscription_payment_failed"
+      ];
+
+      if (attrs && relevantEvents.includes(eventName)) {
+        const email = (attrs.user_email || attrs.customer_email || "").toLowerCase().trim();
+        if (email) {
+          const { error } = await supabase.from("subscribers").upsert(
+            {
+              email,
+              status: attrs.status || "unknown",
+              subscription_id: subscriptionId ? String(subscriptionId) : null,
+              renews_at: attrs.renews_at || null,
+              updated_at: new Date().toISOString()
+            },
+            { onConflict: "email" }
+          );
+          if (error) console.error("Supabase upsert error:", error);
+        }
+      }
+
+      res.status(200).send("OK");
+    } catch (error) {
+      console.error("Webhook processing error:", error);
+      res.status(500).send("Webhook processing failed.");
+    }
+  }
+);
+
 app.use(cors());
+app.use(cookieParser());
 app.use(express.json());
 app.use(express.static("public"));
 
@@ -28,6 +108,76 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // accounts in 2026). If you ever hit free-tier limits or Google renames models
 // again, check ai.google.dev/gemini-api/docs/models for the current option.
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+
+// Statuses from Lemon Squeezy that count as "currently paying".
+const ACTIVE_STATUSES = ["active", "on_trial"];
+
+// Reads and verifies the "Pro" cookie set after a successful /api/unlock-pro
+// call. Returns the verified email, or null if not Pro / cookie missing or invalid.
+function getProEmail(req) {
+  const token = req.cookies?.pro_token;
+  if (!token) return null;
+  try {
+    return jwt.verify(token, process.env.JWT_SECRET).email;
+  } catch {
+    return null;
+  }
+}
+
+// Lets the frontend know whether the current visitor is Pro, without exposing
+// anything else.
+app.get("/api/me", (req, res) => {
+  const email = getProEmail(req);
+  res.json({ isPro: !!email, email: email || null });
+});
+
+// Exposes the (non-secret) Lemon Squeezy buy link to the frontend, so it can
+// be changed later purely from .env without touching any HTML/JS.
+app.get("/api/config", (req, res) => {
+  res.json({ buyLink: process.env.LEMONSQUEEZY_BUY_LINK || null });
+});
+
+// Used both right after a purchase and to restore Pro access on a new device:
+// the visitor enters the email they paid with, we check Supabase (kept up to
+// date by the webhook above), and issue a signed cookie if it's active.
+app.post("/api/unlock-pro", async (req, res) => {
+  try {
+    const email = (req.body?.email || "").toLowerCase().trim();
+    if (!email) {
+      return res.status(400).json({ error: "Please enter the email you used to pay." });
+    }
+
+    const { data, error } = await supabase
+      .from("subscribers")
+      .select("status")
+      .eq("email", email)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Supabase lookup error:", error);
+      return res.status(500).json({ error: "Could not check your subscription right now. Try again shortly." });
+    }
+
+    if (!data || !ACTIVE_STATUSES.includes(data.status)) {
+      return res.status(404).json({
+        error: "No active Pro subscription found for that email. If you just paid, wait a minute and try again."
+      });
+    }
+
+    const token = jwt.sign({ email }, process.env.JWT_SECRET, { expiresIn: "7d" });
+    res.cookie("pro_token", token, {
+      httpOnly: true,
+      secure: req.secure,
+      sameSite: "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+    res.json({ success: true, email });
+  } catch (error) {
+    console.error("Unlock-pro error:", error);
+    res.status(500).json({ error: "Something went wrong. Try again." });
+  }
+});
 
 // --- Schemas: tell Gemini exactly what JSON shape to return for the two
 // features that need structured data. The cover letter doesn't use a schema
@@ -65,11 +215,11 @@ const interviewSchema = {
   }
 };
 
-// --- Simple daily limit, per device (no accounts yet — this is a placeholder
-// until Stage 3 adds real login + Free/Pro plans). Shared across all three AI
-// features below, since they all draw on the same Gemini quota. Resets
-// automatically 24 hours after a device's first request. Lives in memory
-// only, so it resets whenever the server restarts.
+// --- Simple daily limit, per device — only applies to Free (non-Pro)
+// visitors. Shared across all three AI features below, since they all draw
+// on the same Gemini quota. Resets automatically 24 hours after a device's
+// first request. Lives in memory only, so it resets whenever the server
+// restarts.
 const FREE_DAILY_LIMIT = parseInt(process.env.FREE_DAILY_LIMIT || "3", 10);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const usage = new Map();
@@ -141,7 +291,8 @@ async function extractText(file) {
 }
 
 // Shared pipeline for all three AI features: validate key/file, extract CV
-// text, enforce the daily limit, call Gemini, and send a shaped JSON response.
+// text, enforce the daily limit (unless Pro), call Gemini, and send a shaped
+// JSON response.
 // buildPrompt(cvText, jobDescription) -> string
 // schema: optional responseSchema for structured JSON output
 // shapeResult(rawText) -> object to send back to the browser
@@ -177,13 +328,16 @@ async function handleAIRequest(req, res, { buildPrompt, schema, shapeResult }) {
 
     const jobDescription = (req.body.jobDescription || "").trim();
 
-    // Just a check for now — the slot is only consumed once Gemini actually responds.
+    // Pro visitors skip the daily limit entirely.
+    const proEmail = getProEmail(req);
     const deviceId = req.ip;
-    const limitStatus = isOverLimit(deviceId);
-    if (limitStatus.blocked) {
-      return res.status(429).json({
-        error: `Free daily limit reached (${FREE_DAILY_LIMIT} uses/day). Please try again in about ${limitStatus.hoursLeft} hour(s).`
-      });
+    if (!proEmail) {
+      const limitStatus = isOverLimit(deviceId);
+      if (limitStatus.blocked) {
+        return res.status(429).json({
+          error: `Free daily limit reached (${FREE_DAILY_LIMIT} uses/day). Upgrade to Pro for unlimited use, or try again in about ${limitStatus.hoursLeft} hour(s).`
+        });
+      }
     }
 
     const prompt = buildPrompt(cvText, jobDescription);
@@ -202,9 +356,9 @@ async function handleAIRequest(req, res, { buildPrompt, schema, shapeResult }) {
     const raw = response.text;
     if (!raw) throw new Error("Empty response from the AI model.");
 
-    const remaining = recordUsage(deviceId);
     const result = shapeResult(raw);
-    result.remaining = remaining;
+    result.isPro = !!proEmail;
+    result.remaining = proEmail ? null : recordUsage(deviceId);
     res.json(result);
   } catch (error) {
     console.error("AI request error:", error);
