@@ -6,6 +6,7 @@ import crypto from "crypto";
 import cookieParser from "cookie-parser";
 import jwt from "jsonwebtoken";
 import { createClient } from "@supabase/supabase-js";
+import { Paddle } from "@paddle/paddle-node-sdk";
 import { GoogleGenAI } from "@google/genai";
 import { PDFParse } from "pdf-parse";
 import mammoth from "mammoth";
@@ -26,60 +27,70 @@ const upload = multer({
 });
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
+const paddleClient = new Paddle(process.env.PADDLE_API_KEY);
 
-// --- Lemon Squeezy webhook -------------------------------------------------
+// Verifies a Paddle webhook's "Paddle-Signature" header ourselves rather than
+// using the SDK's built-in unmarshal(), which enforces an unreasonably tight
+// 5-SECOND freshness window internally — easy to trip over from normal
+// network/processing delay and cause silently-dropped webhooks. Paddle's own
+// documented algorithm is HMAC-SHA256 over "<timestamp>:<raw body>"; we allow
+// a 5-MINUTE window instead (the same tolerance Stripe recommends).
+function verifyPaddleSignature(rawBodyBuffer, signatureHeader, secret) {
+  if (!signatureHeader) return false;
+  const parts = Object.fromEntries(signatureHeader.split(";").map((p) => p.split("=")));
+  const ts = parts.ts;
+  const h1 = parts.h1;
+  if (!ts || !h1) return false;
+
+  const ageSeconds = Math.abs(Date.now() / 1000 - Number(ts));
+  if (ageSeconds > 300) return false;
+
+  const payload = `${ts}:${rawBodyBuffer.toString("utf8")}`;
+  const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+
+  const expectedBuf = Buffer.from(expected, "utf8");
+  const actualBuf = Buffer.from(h1, "utf8");
+  if (expectedBuf.length !== actualBuf.length) return false;
+  return crypto.timingSafeEqual(expectedBuf, actualBuf);
+}
+
+// --- Paddle webhook ---------------------------------------------------------
 // This route needs the RAW request body to verify the signature, so it must
 // be registered (with its own express.raw parser) BEFORE the global
 // express.json() below — otherwise the body would already be parsed/consumed
 // and signature verification would fail.
 app.post(
-  "/api/webhooks/lemonsqueezy",
+  "/api/webhooks/paddle",
   express.raw({ type: "application/json" }),
   async (req, res) => {
     try {
-      const secret = process.env.LEMONSQUEEZY_WEBHOOK_SECRET;
+      const secret = process.env.PADDLE_WEBHOOK_SECRET;
       if (!secret) {
-        console.error("LEMONSQUEEZY_WEBHOOK_SECRET is not set.");
+        console.error("PADDLE_WEBHOOK_SECRET is not set.");
         return res.status(500).send("Webhook secret not configured.");
       }
 
-      const signatureHeader = req.headers["x-signature"] || "";
-      const digest = Buffer.from(
-        crypto.createHmac("sha256", secret).update(req.body).digest("hex"),
-        "utf8"
-      );
-      const signature = Buffer.from(signatureHeader, "utf8");
-
-      if (digest.length !== signature.length || !crypto.timingSafeEqual(digest, signature)) {
+      const signatureHeader = req.headers["paddle-signature"];
+      if (!verifyPaddleSignature(req.body, signatureHeader, secret)) {
         return res.status(401).send("Invalid signature.");
       }
 
       const payload = JSON.parse(req.body.toString("utf8"));
-      const eventName = payload?.meta?.event_name;
-      const attrs = payload?.data?.attributes;
-      const subscriptionId = payload?.data?.id;
+      const eventType = payload.event_type;
+      const data = payload.data;
 
-      const relevantEvents = [
-        "subscription_created",
-        "subscription_updated",
-        "subscription_cancelled",
-        "subscription_resumed",
-        "subscription_expired",
-        "subscription_paused",
-        "subscription_unpaused",
-        "subscription_payment_success",
-        "subscription_payment_failed"
-      ];
-
-      if (attrs && relevantEvents.includes(eventName)) {
-        const email = (attrs.user_email || attrs.customer_email || "").toLowerCase().trim();
+      // Paddle's raw webhook JSON uses snake_case field names.
+      const relevantEvents = ["subscription.created", "subscription.updated"];
+      if (relevantEvents.includes(eventType) && data?.customer_id) {
+        const customer = await paddleClient.customers.get(data.customer_id);
+        const email = (customer.email || "").toLowerCase().trim();
         if (email) {
           const { error } = await supabase.from("subscribers").upsert(
             {
               email,
-              status: attrs.status || "unknown",
-              subscription_id: subscriptionId ? String(subscriptionId) : null,
-              renews_at: attrs.renews_at || null,
+              status: data.status || "unknown",
+              subscription_id: data.id ? String(data.id) : null,
+              renews_at: data.next_billed_at || null,
               updated_at: new Date().toISOString()
             },
             { onConflict: "email" }
@@ -90,7 +101,7 @@ app.post(
 
       res.status(200).send("OK");
     } catch (error) {
-      console.error("Webhook processing error:", error);
+      console.error("Paddle webhook processing error:", error);
       res.status(500).send("Webhook processing failed.");
     }
   }
@@ -109,8 +120,8 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 // again, check ai.google.dev/gemini-api/docs/models for the current option.
 const MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
-// Statuses from Lemon Squeezy that count as "currently paying".
-const ACTIVE_STATUSES = ["active", "on_trial"];
+// Statuses from Paddle that count as "currently paying".
+const ACTIVE_STATUSES = ["active", "trialing"];
 
 // Reads and verifies the "Pro" cookie set after a successful /api/unlock-pro
 // call. Returns the verified email, or null if not Pro / cookie missing or invalid.
@@ -131,10 +142,16 @@ app.get("/api/me", (req, res) => {
   res.json({ isPro: !!email, email: email || null });
 });
 
-// Exposes the (non-secret) Lemon Squeezy buy link to the frontend, so it can
-// be changed later purely from .env without touching any HTML/JS.
+// Exposes the (non-secret) Paddle client-side token and price ID to the
+// frontend, so they can be changed later purely from .env without touching
+// any HTML/JS. The client-side token is public by design (Paddle's own docs
+// say it's safe to expose) — it can only open a checkout, not move money on
+// its own.
 app.get("/api/config", (req, res) => {
-  res.json({ buyLink: process.env.LEMONSQUEEZY_BUY_LINK || null });
+  res.json({
+    paddleClientToken: process.env.PADDLE_CLIENT_TOKEN || null,
+    paddlePriceId: process.env.PADDLE_PRICE_ID || null
+  });
 });
 
 // Used both right after a purchase and to restore Pro access on a new device:

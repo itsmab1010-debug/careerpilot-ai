@@ -16,6 +16,23 @@ const restoreBtn = document.getElementById("restoreBtn");
 const restoreStatus = document.getElementById("restoreStatus");
 
 let isPro = false;
+let paddlePriceId = null;
+
+async function attemptUnlock(email, { silent = false } = {}) {
+  try {
+    const r = await fetch("/api/unlock-pro", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email })
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || "Could not verify.");
+    return true;
+  } catch (e) {
+    if (!silent) restoreStatus.textContent = e.message;
+    return false;
+  }
+}
 
 async function initProState() {
   try {
@@ -23,7 +40,33 @@ async function initProState() {
     const me = await meRes.json();
     const config = await configRes.json();
 
-    if (config.buyLink && getProBtn) getProBtn.href = config.buyLink;
+    paddlePriceId = config.paddlePriceId || null;
+
+    if (config.paddleClientToken && window.Paddle) {
+      Paddle.Initialize({
+        token: config.paddleClientToken,
+        eventCallback: async (event) => {
+          if (event.name === "checkout.completed") {
+            const email = event.data?.customer?.email;
+            if (!email) return;
+            restoreStatus.textContent = "Payment received — unlocking Pro…";
+            restoreForm.classList.remove("hidden");
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const ok = await attemptUnlock(email, { silent: true });
+              if (ok) {
+                restoreStatus.textContent = "✓ Pro unlocked! Reloading…";
+                setTimeout(() => location.reload(), 1200);
+                return;
+              }
+              await new Promise((r) => setTimeout(r, 2000));
+            }
+            restoreStatus.textContent =
+              "Payment received! Enter your email above and click Unlock Pro to finish.";
+            restoreEmail.value = email;
+          }
+        }
+      });
+    }
 
     isPro = !!me.isPro;
     if (isPro && proBadge) {
@@ -31,10 +74,20 @@ async function initProState() {
       proBadge.classList.remove("hidden");
     }
   } catch {
-    // Badge/buy-link just won't show — core features still work either way.
+    // Checkout/badge just won't show — core features still work either way.
   }
 }
 initProState();
+
+if (getProBtn) {
+  getProBtn.addEventListener("click", () => {
+    if (!paddlePriceId || !window.Paddle) {
+      restoreStatus.textContent = "Checkout isn't ready yet — refresh the page and try again.";
+      return;
+    }
+    Paddle.Checkout.open({ items: [{ priceId: paddlePriceId, quantity: 1 }] });
+  });
+}
 
 if (restoreToggle) {
   restoreToggle.addEventListener("click", () => restoreForm.classList.toggle("hidden"));
@@ -49,21 +102,12 @@ if (restoreBtn) {
     }
     restoreBtn.disabled = true;
     restoreStatus.textContent = "Checking…";
-    try {
-      const r = await fetch("/api/unlock-pro", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email })
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.error || "Could not verify.");
+    const ok = await attemptUnlock(email);
+    if (ok) {
       restoreStatus.textContent = "✓ Pro unlocked! Reloading…";
       setTimeout(() => location.reload(), 1200);
-    } catch (e) {
-      restoreStatus.textContent = e.message;
-    } finally {
-      restoreBtn.disabled = false;
     }
+    restoreBtn.disabled = false;
   });
 }
 
